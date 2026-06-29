@@ -1,0 +1,36 @@
+appId: com.vibeduck.app
+productName: VibeDuck
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+asarUnpack:
+  - "**/*.node"
+# Ship the .env (Supabase URL + public anon key) so cloud sync works in the
+# packaged app. The anon key is safe to bundle; data is protected by RLS.
+extraResources:
+  - from: .env
+    to: .env
+    filter: ["**/*"]
+  # Runtime assets read by the main process (tray icons).
+  - from: resources
+    to: resources
+    filter: ["**/*"]
+win:
+  icon: build/icon.png
+  target:
+    - nsis
+  artifactName: ${productName}-${version}-setup.${ext}
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.png
+  # Skip code-signing for local/personal builds (no Apple Developer cert needed).
+  identity: null
+  target:
+    - dmg
+  artifactName: ${productName}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
