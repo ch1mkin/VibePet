@@ -104,7 +104,19 @@ export class DuckMotionService {
       return
     }
 
-    const target = this.promptWatch ?? this.nextRoamTarget(winX, winY, cursor)
+    // Live on whichever monitor the user is working on. If they've switched to a
+    // coding window on another display, head over there (works across monitors,
+    // never leaving the screen thanks to clampWindow below).
+    if (!this.promptWatch) {
+      const duckDisplayId = screen.getDisplayNearestPoint({ x: bodyX, y: bodyY }).id
+      const cursorDisplay = screen.getDisplayNearestPoint(cursor)
+      if (duckDisplayId !== cursorDisplay.id) {
+        this.roamTarget = this.randomBodyPoint(cursorDisplay.workArea)
+        this.roamDwellUntil = 0
+      }
+    }
+
+    const target = this.promptWatch ?? this.nextRoamTarget(cursor)
     if (!target) {
       // Roaming is dwelling — stand still and watch the cursor.
       this.emit({ moving: false, fast: false, facing: cursorFacing })
@@ -130,9 +142,10 @@ export class DuckMotionService {
 
     const fast = dist > RUN_DISTANCE
     const step = Math.min(fast ? RUN_SPEED : WALK_SPEED, dist)
-    const { workArea } = screen.getDisplayNearestPoint({ x: bodyX, y: bodyY })
-    const nextX = clamp(Math.round(winX + (dx / dist) * step), workArea.x, workArea.x + workArea.width - WIN_W)
-    const nextY = clamp(Math.round(winY + (dy / dist) * step), workArea.y, workArea.y + workArea.height - WIN_H)
+    const { x: nextX, y: nextY } = this.clampWindow(
+      Math.round(winX + (dx / dist) * step),
+      Math.round(winY + (dy / dist) * step)
+    )
     duck.setPosition(nextX, nextY)
 
     // While walking it faces where it's going; standing still it watches the cursor.
@@ -140,10 +153,12 @@ export class DuckMotionService {
   }
 
   /** Returns the current roam destination (body point), or null while dwelling. */
-  private nextRoamTarget(winX: number, winY: number, cursor: Point): Point | null {
+  private nextRoamTarget(cursor: Point): Point | null {
     if (Date.now() < this.roamDwellUntil) return null
     if (!this.roamTarget) {
-      const { workArea } = screen.getDisplayNearestPoint({ x: winX + ANCHOR_X, y: winY + ANCHOR_Y })
+      // Roam within the monitor the user is currently on (keeps the duck near
+      // where you're working, while still letting it use either screen).
+      const { workArea } = screen.getDisplayNearestPoint(cursor)
       this.roamTarget = this.randomBodyPoint(workArea)
       if (!this.announcedRoam) {
         this.announcedRoam = true
@@ -153,8 +168,30 @@ export class DuckMotionService {
         })
       }
     }
-    void cursor
     return this.roamTarget
+  }
+
+  /**
+   * Keeps the duck window fully inside the combined desktop (all monitors). It
+   * may roam freely across adjacent displays, but can never end up off-screen —
+   * which previously happened on Windows multi-monitor setups.
+   */
+  private clampWindow(x: number, y: number): Point {
+    let minX = Infinity
+    let minY = Infinity
+    let maxRight = -Infinity
+    let maxBottom = -Infinity
+    for (const display of screen.getAllDisplays()) {
+      const a = display.workArea
+      minX = Math.min(minX, a.x)
+      minY = Math.min(minY, a.y)
+      maxRight = Math.max(maxRight, a.x + a.width)
+      maxBottom = Math.max(maxBottom, a.y + a.height)
+    }
+    return {
+      x: clamp(x, minX, maxRight - WIN_W),
+      y: clamp(y, minY, maxBottom - WIN_H)
+    }
   }
 
   private randomBodyPoint(workArea: Rectangle): Point {

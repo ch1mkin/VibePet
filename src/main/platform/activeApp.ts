@@ -227,13 +227,15 @@ $sb = New-Object System.Text.StringBuilder 512
 [void][Win]::GetWindowText($h, $sb, 512)
 $procId = 0
 [void][Win]::GetWindowThreadProcessId($h, [ref]$procId)
-$proc = (Get-Process -Id $procId).ProcessName
+$proc = ''
+try { $proc = (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch {}
 Write-Output ($proc + "|" + $sb.ToString())`
 
   async getActive(): Promise<ActiveAppInfo | null> {
     try {
       const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "${Win32ActiveApp.PS.replace(/"/g, '\\"')}"`
-      const { stdout } = await run(cmd, { timeout: EXEC_TIMEOUT * 2 })
+      // Compiling the Win32 type can be slow on the first call, so allow extra time.
+      const { stdout } = await run(cmd, { timeout: 6000 })
       const [proc, ...rest] = stdout.trim().split('|')
       if (!proc) return null
       return { appName: proc, title: rest.join('|').trim() }
