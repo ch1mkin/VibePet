@@ -30,6 +30,11 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
+/** Round to an integer, falling back to `fallback` when the value isn't finite. */
+function safeInt(value: number, fallback: number): number {
+  return Math.round(Number.isFinite(value) ? value : fallback)
+}
+
 /**
  * Drives the duck's position.
  *
@@ -78,8 +83,11 @@ export class DuckMotionService {
 
   /** Point (duck body) to walk to while watching a prompt; null resumes roaming. */
   setPromptWatch(point: Point | null): void {
-    this.promptWatch = point
-    if (point) {
+    // Ignore bogus coordinates (e.g. from Windows UI Automation) so the duck
+    // never tries to walk to a non-finite point.
+    const valid = point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : null
+    this.promptWatch = valid
+    if (valid) {
       this.roamTarget = null
       this.roamDwellUntil = 0
     }
@@ -129,7 +137,7 @@ export class DuckMotionService {
     const dy = targetWinY - winY
     const dist = Math.hypot(dx, dy)
 
-    if (dist <= STOP_DISTANCE) {
+    if (!Number.isFinite(dist) || dist <= STOP_DISTANCE) {
       if (!this.promptWatch) {
         // Reached a roam point — pause before wandering again.
         this.roamTarget = null
@@ -177,20 +185,26 @@ export class DuckMotionService {
    * which previously happened on Windows multi-monitor setups.
    */
   private clampWindow(x: number, y: number): Point {
+    const displays = screen.getAllDisplays()
+    if (displays.length === 0) return { x: safeInt(x, 0), y: safeInt(y, 0) }
+
     let minX = Infinity
     let minY = Infinity
     let maxRight = -Infinity
     let maxBottom = -Infinity
-    for (const display of screen.getAllDisplays()) {
+    for (const display of displays) {
       const a = display.workArea
       minX = Math.min(minX, a.x)
       minY = Math.min(minY, a.y)
       maxRight = Math.max(maxRight, a.x + a.width)
       maxBottom = Math.max(maxBottom, a.y + a.height)
     }
+    // Fractional display scaling (e.g. 150% on Windows) makes workArea values
+    // non-integer; setPosition requires integers, so round the final result and
+    // fall back to the input if anything came out non-finite.
     return {
-      x: clamp(x, minX, maxRight - WIN_W),
-      y: clamp(y, minY, maxBottom - WIN_H)
+      x: safeInt(clamp(x, minX, maxRight - WIN_W), x),
+      y: safeInt(clamp(y, minY, maxBottom - WIN_H), y)
     }
   }
 
