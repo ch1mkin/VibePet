@@ -169,6 +169,11 @@ export class WindowManager {
     win.setAlwaysOnTop(true, 'screen-saver')
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
     win.once('ready-to-show', () => {
+      // Re-assert full-display bounds: on Windows a transparent, frameless window
+      // is sometimes created smaller than requested, leaving the game (ground,
+      // Stop button) confined to part of the screen. Setting bounds again here
+      // guarantees it spans the whole monitor.
+      win.setBounds(bounds)
       // Show WITHOUT activating VibeDuck, so the user's coding app stays the active
       // app and keeps rendering/generating behind the transparent overlay (it would
       // otherwise be throttled by the OS once deactivated). Clicks still land on the

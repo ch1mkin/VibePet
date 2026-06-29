@@ -102,7 +102,12 @@ export class PromptWatchService {
     }
 
     const boost = this.promptBoost.isEnabled()
-    const field = await this.activeApp.getFocusedField()
+    // Reading the focused field via Windows UI Automation is slow and often
+    // unavailable in Electron-based editors (VS Code/Cursor). Only do it when
+    // Prompt Boost needs the live text, or on macOS where it's cheap. Otherwise
+    // fall through to the activity heuristic so "coding" stays responsive.
+    const field =
+      boost || process.platform === 'darwin' ? await this.activeApp.getFocusedField() : null
     if (field && field.w > 0 && field.h > 0) {
       // Perch at the top-right corner of the input box.
       this.motion.setPromptWatch({ x: field.x + field.w - 24, y: field.y - 4 })

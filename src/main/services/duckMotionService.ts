@@ -9,6 +9,8 @@ const RUN_DISTANCE = 340 // run when the target is far
 const STOP_DISTANCE = 6 // close enough to the target — settle
 const WIN_W = 300
 const WIN_H = 300
+/** Keep this far from the outer edge of the whole desktop so the duck never touches a boundary. */
+const EDGE_MARGIN = 16
 // Where the duck's body sits inside the window.
 const ANCHOR_X = WIN_W / 2
 const ANCHOR_Y = 235
@@ -94,6 +96,17 @@ export class DuckMotionService {
   }
 
   private tick(): void {
+    try {
+      this.runTick()
+    } catch (err) {
+      // A transient screen/position error must never crash the whole app
+      // (this previously surfaced as the "JavaScript error in the main process"
+      // dialog when moving between monitors).
+      console.error('[VibeDuck] duck motion tick failed:', err)
+    }
+  }
+
+  private runTick(): void {
     if (this.paused) return
     const duck = this.windows.getDuckWindow()
     if (!duck || duck.isDestroyed() || !duck.isVisible()) {
@@ -203,8 +216,8 @@ export class DuckMotionService {
     // non-integer; setPosition requires integers, so round the final result and
     // fall back to the input if anything came out non-finite.
     return {
-      x: safeInt(clamp(x, minX, maxRight - WIN_W), x),
-      y: safeInt(clamp(y, minY, maxBottom - WIN_H), y)
+      x: safeInt(clamp(x, minX + EDGE_MARGIN, maxRight - WIN_W - EDGE_MARGIN), x),
+      y: safeInt(clamp(y, minY + EDGE_MARGIN, maxBottom - WIN_H - EDGE_MARGIN), y)
     }
   }
 

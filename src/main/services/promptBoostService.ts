@@ -42,6 +42,8 @@ export class PromptBoostService {
   /** While > now, PromptWatch must not overwrite the boost's own draft bubble. */
   private draftHold = 0
   private draftTimer: ReturnType<typeof setTimeout> | null = null
+  /** Throttle the "it's off, enable it" hint so it doesn't spam on every press. */
+  private lastDisabledHintAt = 0
 
   constructor(
     private readonly settings: SettingsRepository,
@@ -53,7 +55,10 @@ export class PromptBoostService {
 
   init(): void {
     this.enabled = this.settings.get(SETTINGS_KEY) === '1'
-    if (this.enabled) this.registerShortcut()
+    // Always claim the shortcut so we can nudge the user to turn the feature on
+    // when they try it while it's off. (AI chat boxes submit with Enter, not
+    // ⌘/Ctrl+Enter, so claiming this combo doesn't block sending.)
+    this.registerShortcut()
   }
 
   /**
@@ -83,24 +88,34 @@ export class PromptBoostService {
   setEnabled(enabled: boolean): { enabled: boolean } {
     this.enabled = enabled
     this.settings.set(SETTINGS_KEY, enabled ? '1' : '0')
-    if (enabled) {
-      this.registerShortcut()
-      this.ensureAccessibility()
-    } else {
-      this.shortcuts.unregister(ACCEL)
-    }
+    // Keep the shortcut registered either way (see init): when off it shows the
+    // "enable it in Settings" hint instead of boosting.
+    this.registerShortcut()
+    if (enabled) this.ensureAccessibility()
     this.armed = false
     this.windows.broadcast(IPC.EvtPromptBoost, { enabled })
     return { enabled }
   }
 
   private registerShortcut(): void {
+    // Idempotent: drop any prior binding before (re)claiming the accelerator.
+    this.shortcuts.unregister(ACCEL)
     this.shortcuts.register(ACCEL, () => void this.trigger())
   }
 
   /** Invoked by the global shortcut (and the duck context menu). */
   async trigger(): Promise<void> {
-    if (!this.enabled || this.busy) return
+    if (this.busy) return
+    if (!this.enabled) {
+      // The user reached for Prompt Boost but it's switched off — nudge them.
+      const now = Date.now()
+      if (now - this.lastDisabledHintAt > 8000) {
+        this.lastDisabledHintAt = now
+        this.react('confused')
+        this.say('Prompt Boost is off — turn it on in Settings ⚙️', 'tip')
+      }
+      return
+    }
 
     // Stage 2: a freshly-boosted prompt is waiting — send it.
     if (this.armed && Date.now() - this.armedAt < ARM_TIMEOUT_MS) {

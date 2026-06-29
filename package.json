@@ -1,8 +1,12 @@
 {
   "name": "vibeduck",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "VibeDuck — AI desktop pet for developers",
-  "author": "VibeDuck",
+  "author": {
+    "name": "VibeDuck",
+    "email": "vibeduck.app@gmail.com",
+    "url": "https://github.com/ch1mkin/VibePet"
+  },
   "license": "MIT",
   "main": "./out/main/index.js",
   "type": "module",

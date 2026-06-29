@@ -28,6 +28,14 @@ win:
   target:
     - nsis
   artifactName: ${productName}-${version}-${arch}-setup.${ext}
+  # Shown as the publisher in file properties / installer. NOTE: this does NOT
+  # remove the SmartScreen "unknown publisher" warning — that needs a paid
+  # code-signing certificate. It just fills in the author metadata.
+  publisherName: VibeDuck
+  legalTrademarks: VibeDuck
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
 mac:
   category: public.app-category.developer-tools
   icon: build/icon.png
@@ -36,6 +44,3 @@ mac:
   target:
     - dmg
   artifactName: ${productName}-${version}-${arch}.${ext}
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
