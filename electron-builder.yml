@@ -3,6 +3,9 @@ productName: VibeDuck
 directories:
   output: release
   buildResources: build
+# Ad-hoc sign the macOS app so Gatekeeper doesn't flag it as "damaged" on Apple
+# Silicon (we have no paid Apple cert). See build/afterPack.cjs.
+afterPack: ./build/afterPack.cjs
 files:
   - out/**/*
   - package.json
