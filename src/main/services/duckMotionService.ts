@@ -1,4 +1,4 @@
-import { screen, type Display, type Rectangle } from 'electron'
+import { screen, type Display } from 'electron'
 import { IPC } from '@shared/ipc-contract'
 import type { WindowManager } from '../windows/windowManager'
 
@@ -11,6 +11,18 @@ const WIN_W = 300
 const WIN_H = 300
 /** Keep this far from the outer edge of the whole desktop so the duck never touches a boundary. */
 const EDGE_MARGIN = 16
+/** Fraction of each screen's height (measured from the bottom) the duck may never enter. */
+const BOTTOM_RESERVE = 0.1
+
+/**
+ * The lowest Y the duck's BODY may occupy on a given display: 10% up from the
+ * bottom of the full screen bounds. Using bounds (not workArea) makes this a
+ * hard floor that holds even when Windows misreports the taskbar-free area.
+ */
+function bottomFloorBodyY(display: Display): number {
+  const b = display.bounds
+  return b.y + b.height * (1 - BOTTOM_RESERVE)
+}
 // Where the duck's body sits inside the window.
 const ANCHOR_X = WIN_W / 2
 const ANCHOR_Y = 235
@@ -159,6 +171,19 @@ export class DuckMotionService {
     }
   }
 
+  /**
+   * Pin the duck where it currently stands (target = its own position) so it
+   * stops walking and can play a stationary animation like "coding" — movement
+   * always visually overrides idle/reaction states, so the duck must be still
+   * for the coding animation to actually show.
+   */
+  stayPut(): void {
+    const duck = this.windows.getDuckWindow()
+    if (!duck || duck.isDestroyed()) return
+    const [winX, winY] = duck.getPosition()
+    this.setPromptWatch({ x: winX + ANCHOR_X, y: winY + ANCHOR_Y })
+  }
+
   private tick(): void {
     try {
       this.runTick()
@@ -209,7 +234,7 @@ export class DuckMotionService {
     if (!this.promptWatch) {
       const duckDisplayId = screen.getDisplayNearestPoint({ x: bodyX, y: bodyY }).id
       if (duckDisplayId !== workDisplay.id) {
-        this.roamTarget = this.randomBodyPoint(workDisplay.workArea)
+        this.roamTarget = this.randomBodyPoint(workDisplay)
         this.roamDwellUntil = 0
       }
     }
@@ -256,7 +281,7 @@ export class DuckMotionService {
     if (!this.roamTarget) {
       // Roam within the monitor that holds the focused editor/AI window, so the
       // duck stays where you're working instead of chasing the mouse cursor.
-      this.roamTarget = this.randomBodyPoint(workDisplay.workArea)
+      this.roamTarget = this.randomBodyPoint(workDisplay)
       if (!this.announcedRoam) {
         this.announcedRoam = true
         this.windows.broadcast(IPC.EvtDuckSay, {
@@ -271,11 +296,10 @@ export class DuckMotionService {
   /**
    * Keeps the duck window on-screen. Horizontally it may roam across the whole
    * desktop (so side-by-side monitors work), but VERTICALLY it's clamped to the
-   * workArea of the monitor the duck is currently on. workArea excludes the
-   * taskbar, and because the duck's feet sit ~65px above the window's bottom
-   * edge plus the EDGE_MARGIN, it can never reach — or even get close to — the
-   * taskbar, and never leaves the screen (the previous union clamp let it drift
-   * toward another monitor's taskbar on Windows).
+   * monitor the duck is currently on. As a hard guarantee against ever walking
+   * down through the taskbar on Windows, the duck's body is also kept out of the
+   * bottom 10% of that screen (using the full display bounds, not just the work
+   * area — so it holds even if the OS misreports the taskbar-free work area).
    */
   private clampWindow(x: number, y: number): Point {
     const displays = screen.getAllDisplays()
@@ -293,9 +317,13 @@ export class DuckMotionService {
     // Vertical bounds come from the single monitor the duck's body is over, so
     // we always respect THAT screen's taskbar/work area.
     const bodyPoint = { x: safeInt(x + ANCHOR_X, 0), y: safeInt(y + ANCHOR_Y, 0) }
-    const here = screen.getDisplayNearestPoint(bodyPoint).workArea
+    const display = screen.getDisplayNearestPoint(bodyPoint)
+    const here = display.workArea
     const top = here.y + EDGE_MARGIN
-    const bottom = here.y + here.height - WIN_H - EDGE_MARGIN
+    // The lowest the WINDOW top may go: whichever is higher (smaller Y) of the
+    // work-area bottom and the 10%-from-bottom floor for the duck's body.
+    const floorWinY = bottomFloorBodyY(display) - ANCHOR_Y
+    const bottom = Math.min(here.y + here.height - WIN_H - EDGE_MARGIN, floorWinY)
 
     // Fractional display scaling (e.g. 150% on Windows) makes workArea values
     // non-integer; setPosition requires integers, so round the final result and
@@ -306,11 +334,13 @@ export class DuckMotionService {
     }
   }
 
-  private randomBodyPoint(workArea: Rectangle): Point {
+  private randomBodyPoint(display: Display): Point {
+    const workArea = display.workArea
     const minX = workArea.x + ANCHOR_X
     const maxX = workArea.x + workArea.width - (WIN_W - ANCHOR_X)
     const minY = workArea.y + ANCHOR_Y
-    const maxY = workArea.y + workArea.height - (WIN_H - ANCHOR_Y)
+    // Never pick a roam target inside the bottom 10% of the screen.
+    const maxY = Math.min(workArea.y + workArea.height - (WIN_H - ANCHOR_Y), bottomFloorBodyY(display))
     return {
       x: minX + Math.random() * Math.max(1, maxX - minX),
       y: minY + Math.random() * Math.max(1, maxY - minY)

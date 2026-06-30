@@ -109,8 +109,13 @@ export class PromptWatchService {
     const field =
       boost || process.platform === 'darwin' ? await this.activeApp.getFocusedField() : null
     if (field && field.w > 0 && field.h > 0) {
-      // Perch at the top-right corner of the input box.
-      this.motion.setPromptWatch({ x: field.x + field.w - 24, y: field.y - 4 })
+      // Perch at the top-right corner of the input box. On Windows the rect is
+      // in PHYSICAL pixels (UI Automation) while window positioning uses DIPs,
+      // so convert or the duck would aim far below the screen.
+      const corner = { x: field.x + field.w - 24, y: field.y - 4 }
+      const watch =
+        process.platform === 'win32' ? screen.screenToDipPoint(corner) : corner
+      this.motion.setPromptWatch(watch)
       const raw = field.text ?? ''
       const text = raw.trim()
       if (boost) {
@@ -135,14 +140,13 @@ export class PromptWatchService {
       return POLL_MS
     }
 
-    // Couldn't locate the field — approach the usual chat area (bottom-center)
-    // and infer typing from input activity.
+    // Couldn't read the focused field (common on Windows / Electron editors).
+    // Rather than send the duck on a long walk to a guessed chat location —
+    // which keeps it in the "walking" state and hides the coding animation —
+    // pin it where it stands so the "coding" animation can actually show while
+    // the user types.
     if (!this.promptBoost.holdsDraft()) this.setDraft('')
-    const { workArea } = screen.getPrimaryDisplay()
-    this.motion.setPromptWatch({
-      x: workArea.x + workArea.width / 2,
-      y: workArea.y + workArea.height - 150
-    })
+    this.motion.stayPut()
     this.signalTypingByActivity()
     // Poll a bit faster in boost mode so the duck reacts quickly once the field
     // becomes readable again.
