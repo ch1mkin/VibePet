@@ -21,7 +21,11 @@ export class VisibilityService {
   constructor(
     private readonly activeApp: ActiveAppAdapter,
     private readonly settings: SettingsRepository,
-    private readonly onChange: (visible: boolean) => void
+    private readonly onChange: (visible: boolean) => void,
+    /** Reports the focused window's physical-pixel rect (Windows) each poll. */
+    private readonly onActiveWindow?: (
+      bounds: { x: number; y: number; w: number; h: number } | null
+    ) => void
   ) {
     this.config = this.load()
   }
@@ -70,10 +74,19 @@ export class VisibilityService {
   }
 
   private async computeVisible(): Promise<boolean> {
-    if (!this.config.enabled) return true
+    if (!this.config.enabled) {
+      this.onActiveWindow?.(null)
+      return true
+    }
     const info = await this.activeApp.getActive()
-    if (!info) return true // fail open: detection unavailable
+    if (!info) {
+      this.onActiveWindow?.(null)
+      return true // fail open: detection unavailable
+    }
     const visible = matches(info, this.config)
+    // Tell the duck which monitor the focused coding/AI window lives on so it
+    // stays there instead of chasing the cursor across screens.
+    this.onActiveWindow?.(visible ? info.bounds ?? null : null)
     console.log(
       `[VibeDuck] active app="${info.appName}"${info.url ? ` url=${info.url}` : ''} -> duck ${visible ? 'shown' : 'hidden'}`
     )

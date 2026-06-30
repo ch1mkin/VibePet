@@ -14,6 +14,8 @@ export interface ActiveAppInfo {
   title?: string
   /** Active browser tab URL when obtainable (macOS, best-effort). */
   url?: string
+  /** Foreground window rect in PHYSICAL pixels (Windows, best-effort). */
+  bounds?: { x: number; y: number; w: number; h: number }
 }
 
 /** The currently focused text field's on-screen rect and value (best-effort). */
@@ -216,9 +218,11 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 public class Win {
+  public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
 }
 '@
 Add-Type $sig
@@ -229,16 +233,25 @@ $procId = 0
 [void][Win]::GetWindowThreadProcessId($h, [ref]$procId)
 $proc = ''
 try { $proc = (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch {}
-Write-Output ($proc + "|" + $sb.ToString())`
+$r = New-Object Win+RECT
+[void][Win]::GetWindowRect($h, [ref]$r)
+# proc | left | top | right | bottom | title  (title last; it may contain '|')
+Write-Output ($proc + "|" + $r.Left + "|" + $r.Top + "|" + $r.Right + "|" + $r.Bottom + "|" + $sb.ToString())`
 
   async getActive(): Promise<ActiveAppInfo | null> {
     try {
       const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "${Win32ActiveApp.PS.replace(/"/g, '\\"')}"`
       // Compiling the Win32 type can be slow on the first call, so allow extra time.
       const { stdout } = await run(cmd, { timeout: 6000 })
-      const [proc, ...rest] = stdout.trim().split('|')
+      const parts = stdout.trim().split('|')
+      const proc = parts[0]
       if (!proc) return null
-      return { appName: proc, title: rest.join('|').trim() }
+      const info: ActiveAppInfo = { appName: proc, title: parts.slice(5).join('|').trim() }
+      const [left, top, right, bottom] = parts.slice(1, 5).map(Number)
+      if ([left, top, right, bottom].every(Number.isFinite) && right > left && bottom > top) {
+        info.bounds = { x: left, y: top, w: right - left, h: bottom - top }
+      }
+      return info
     } catch {
       return null
     }

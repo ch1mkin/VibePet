@@ -93,14 +93,17 @@ function bootstrap(): void {
     auth.onStateChange((state) => windows.broadcast(IPC.EvtAuthState, state))
     void auth.restore()
 
-    visibilityService = new VisibilityService(platform.activeApp, repos.settings, (visible) =>
-      windows.setDuckVisible(visible)
+    // The duck roams the screen on its own, facing the cursor's direction.
+    motionService = new DuckMotionService(windows)
+
+    visibilityService = new VisibilityService(
+      platform.activeApp,
+      repos.settings,
+      (visible) => windows.setDuckVisible(visible),
+      (bounds) => motionService?.setActiveWindowBounds(bounds)
     )
 
     clipboardService = new ClipboardService(platform.clipboard, repos.clipboard)
-
-    // The duck roams the screen on its own, facing the cursor's direction.
-    motionService = new DuckMotionService(windows)
 
     // Mini-games: pause the duck's autopilot while a game owns the screen.
     const games = new GameService(windows, motionService, visibilityService)

@@ -1,10 +1,10 @@
-import { screen, type Rectangle } from 'electron'
+import { screen, type Display, type Rectangle } from 'electron'
 import { IPC } from '@shared/ipc-contract'
 import type { WindowManager } from '../windows/windowManager'
 
 const TICK_MS = 16
-const WALK_SPEED = 7 // px per tick
-const RUN_SPEED = 16
+const WALK_SPEED = 4 // px per tick — gentle stroll
+const RUN_SPEED = 9 // px per tick — hurrying over to you
 const RUN_DISTANCE = 340 // run when the target is far
 const STOP_DISTANCE = 6 // close enough to the target — settle
 const WIN_W = 300
@@ -57,6 +57,9 @@ export class DuckMotionService {
 
   private promptWatch: Point | null = null
 
+  /** Foreground (coding/AI) window rect in PHYSICAL pixels, or null. */
+  private activeWinBounds: { x: number; y: number; w: number; h: number } | null = null
+
   constructor(private readonly windows: WindowManager) {}
 
   start(): void {
@@ -81,6 +84,46 @@ export class DuckMotionService {
   /** Freeze all movement (e.g. while a mini-game owns the screen). */
   setPaused(paused: boolean): void {
     this.paused = paused
+  }
+
+  /**
+   * Tell the duck which monitor the user is actually working on, derived from
+   * the focused coding/AI window (physical-pixel rect). The duck stays on that
+   * display and never follows the cursor onto another monitor or the desktop.
+   * Pass null when unknown (falls back to the cursor's display).
+   */
+  setActiveWindowBounds(bounds: { x: number; y: number; w: number; h: number } | null): void {
+    const valid =
+      bounds &&
+      [bounds.x, bounds.y, bounds.w, bounds.h].every(Number.isFinite) &&
+      bounds.w > 0 &&
+      bounds.h > 0
+        ? bounds
+        : null
+    this.activeWinBounds = valid
+  }
+
+  /**
+   * Resolve the display the user is working on. Prefers the focused window's
+   * display (so the duck lives where the editor/chat is, not where the mouse
+   * wandered off to). Falls back to the cursor's display when we don't have a
+   * window rect (e.g. macOS, or detection unavailable).
+   */
+  private workDisplay(cursor: Point): Display {
+    const bounds = this.activeWinBounds
+    if (bounds && process.platform === 'win32') {
+      try {
+        const center = { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h / 2 }
+        // GetWindowRect is in physical pixels; Electron's screen API is in DIPs.
+        const dip = screen.screenToDipPoint(center)
+        if (Number.isFinite(dip.x) && Number.isFinite(dip.y)) {
+          return screen.getDisplayNearestPoint(dip)
+        }
+      } catch {
+        // Fall through to the cursor display.
+      }
+    }
+    return screen.getDisplayNearestPoint(cursor)
   }
 
   /** Point (duck body) to walk to while watching a prompt; null resumes roaming. */
@@ -125,19 +168,21 @@ export class DuckMotionService {
       return
     }
 
-    // Live on whichever monitor the user is working on. If they've switched to a
-    // coding window on another display, head over there (works across monitors,
-    // never leaving the screen thanks to clampWindow below).
+    const workDisplay = this.workDisplay(cursor)
+
+    // Live on whichever monitor the user is working on (the display that holds
+    // the focused editor/AI window). If they've switched to a coding window on
+    // another display, head over there — but never follow the cursor onto the
+    // desktop or another monitor on its own.
     if (!this.promptWatch) {
       const duckDisplayId = screen.getDisplayNearestPoint({ x: bodyX, y: bodyY }).id
-      const cursorDisplay = screen.getDisplayNearestPoint(cursor)
-      if (duckDisplayId !== cursorDisplay.id) {
-        this.roamTarget = this.randomBodyPoint(cursorDisplay.workArea)
+      if (duckDisplayId !== workDisplay.id) {
+        this.roamTarget = this.randomBodyPoint(workDisplay.workArea)
         this.roamDwellUntil = 0
       }
     }
 
-    const target = this.promptWatch ?? this.nextRoamTarget(cursor)
+    const target = this.promptWatch ?? this.nextRoamTarget(workDisplay)
     if (!target) {
       // Roaming is dwelling — stand still and watch the cursor.
       this.emit({ moving: false, fast: false, facing: cursorFacing })
@@ -174,13 +219,12 @@ export class DuckMotionService {
   }
 
   /** Returns the current roam destination (body point), or null while dwelling. */
-  private nextRoamTarget(cursor: Point): Point | null {
+  private nextRoamTarget(workDisplay: Display): Point | null {
     if (Date.now() < this.roamDwellUntil) return null
     if (!this.roamTarget) {
-      // Roam within the monitor the user is currently on (keeps the duck near
-      // where you're working, while still letting it use either screen).
-      const { workArea } = screen.getDisplayNearestPoint(cursor)
-      this.roamTarget = this.randomBodyPoint(workArea)
+      // Roam within the monitor that holds the focused editor/AI window, so the
+      // duck stays where you're working instead of chasing the mouse cursor.
+      this.roamTarget = this.randomBodyPoint(workDisplay.workArea)
       if (!this.announcedRoam) {
         this.announcedRoam = true
         this.windows.broadcast(IPC.EvtDuckSay, {
