@@ -200,7 +200,7 @@ function GeometryEditor({
           columns={draft.columns}
           frameCount={draft.frameCount}
           fps={draft.fps}
-          box={72}
+          box={160}
           playing={playing}
         />
         <button

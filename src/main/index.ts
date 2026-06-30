@@ -22,6 +22,7 @@ import type { Tray } from 'electron'
 
 const PANEL_SHORTCUT = 'CommandOrControl+Shift+D'
 const SIT_SHORTCUT = 'CommandOrControl+Shift+0'
+const RECALL_SHORTCUT = 'CommandOrControl+Shift+9'
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
 // A custom scheme to serve user sprite sheets. Needed because the renderer runs
@@ -161,7 +162,12 @@ function bootstrap(): void {
 
     // Always-present menu-bar/tray icon so the app is reachable even when the
     // duck is hidden (it only appears on coding/AI apps).
-    tray = createTray({ windows, promptBoost, visibility: visibilityService })
+    tray = createTray({
+      windows,
+      promptBoost,
+      visibility: visibilityService,
+      onRecall: () => motionService?.recall()
+    })
 
     // Let the user know it launched (the duck stays hidden until they're in an
     // editor/AI app, which can otherwise look like "nothing happened").
@@ -169,6 +175,15 @@ function bootstrap(): void {
       'VibeDuck is running 🦆',
       "I'll pop up when you're in your editor or an AI chat. Find me in the menu bar."
     )
+
+    // Call the duck back: rescue it to the centre of the monitor you're on, in
+    // case it ever ends up off-screen / under the taskbar.
+    platform.shortcuts.register(RECALL_SHORTCUT, () => {
+      windows.setDuckVisible(true)
+      motionService?.recall()
+      windows.broadcast(IPC.EvtDuckBehavior, { behavior: 'happy' })
+      windows.broadcast(IPC.EvtDuckSay, { text: 'here I am! 🦆', tone: 'happy' })
+    })
 
     // Sit/stay toggle: freeze the duck in place (and tell the user).
     platform.shortcuts.register(SIT_SHORTCUT, () => {

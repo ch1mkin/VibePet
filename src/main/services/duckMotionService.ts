@@ -81,6 +81,27 @@ export class DuckMotionService {
     return this.sitting
   }
 
+  /**
+   * Instantly bring the duck back to a clearly visible spot on the monitor the
+   * user is working on (centre of the work area, always on-screen). Clears any
+   * "sit" or prompt-watch state so it's free to roam again. Used by the
+   * "call duck back" shortcut as a rescue if it ever ends up out of reach.
+   */
+  recall(): void {
+    const duck = this.windows.getDuckWindow()
+    if (!duck || duck.isDestroyed()) return
+    this.sitting = false
+    this.promptWatch = null
+    this.roamTarget = null
+    this.roamDwellUntil = 0
+    const cursor = screen.getCursorScreenPoint()
+    const { workArea } = this.workDisplay(cursor)
+    const bodyX = workArea.x + workArea.width / 2
+    const bodyY = workArea.y + workArea.height / 2
+    const { x, y } = this.clampWindow(Math.round(bodyX - ANCHOR_X), Math.round(bodyY - ANCHOR_Y))
+    duck.setPosition(x, y)
+  }
+
   /** Freeze all movement (e.g. while a mini-game owns the screen). */
   setPaused(paused: boolean): void {
     this.paused = paused
@@ -158,7 +179,18 @@ export class DuckMotionService {
     }
 
     const cursor = screen.getCursorScreenPoint()
-    const [winX, winY] = duck.getPosition()
+    let [winX, winY] = duck.getPosition()
+
+    // Safety net: every tick, make sure the duck is inside the safe area of its
+    // monitor (above the taskbar, on-screen). If a display/taskbar change left it
+    // out of bounds while it was standing still, pull it back in immediately.
+    const safe = this.clampWindow(winX, winY)
+    if (safe.x !== winX || safe.y !== winY) {
+      duck.setPosition(safe.x, safe.y)
+      winX = safe.x
+      winY = safe.y
+    }
+
     const bodyX = winX + ANCHOR_X
     const bodyY = winY + ANCHOR_Y
     const cursorFacing: 'left' | 'right' = cursor.x >= bodyX ? 'right' : 'left'

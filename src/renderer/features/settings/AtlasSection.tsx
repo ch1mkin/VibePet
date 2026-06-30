@@ -150,7 +150,7 @@ function AtlasEditor({
             frameCount={count}
             fps={fps}
             startFrame={sel.from}
-            box={80}
+            box={160}
             playing={playing}
           />
           <button

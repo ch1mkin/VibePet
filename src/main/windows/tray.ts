@@ -8,6 +8,7 @@ interface TrayDeps {
   windows: WindowManager
   promptBoost: PromptBoostService
   visibility: VisibilityService
+  onRecall: () => void
 }
 
 /** Directory where bundled runtime assets (tray icons) live, dev and packaged. */
@@ -34,6 +35,13 @@ export function createTray(deps: TrayDeps): Tray {
       Menu.buildFromTemplate([
         { label: '🦆 Open Assistant', click: () => deps.windows.togglePanel() },
         { label: 'Show Duck', click: () => deps.windows.setDuckVisible(true) },
+        {
+          label: 'Call Duck Back (Ctrl/⌘+Shift+9)',
+          click: () => {
+            deps.windows.setDuckVisible(true)
+            deps.onRecall()
+          }
+        },
         { type: 'separator' },
         {
           label: 'Prompt Boost',
