@@ -161,7 +161,8 @@ export function EndlessRunner({ onExit }: { onExit: () => void }): JSX.Element {
         // Keep custom obstacle art at its natural aspect ratio.
         const obs = assetsRef.current['runner.obstacle']
         const oimg = obs ? readyImage(obs) : null
-        let ow = rand(22, 34)
+        // Default pixel cactus keeps the website artwork's aspect ratio.
+        let ow = oh * 0.62
         if (oimg && obs) ow = (oimg.naturalWidth / obs.frames / oimg.naturalHeight) * oh
         s.obstacles.push({ x: s.w + 20, w: ow, h: oh })
         // Cacti start sparse and gradually get more frequent as the score climbs
@@ -304,17 +305,52 @@ function drawRunner(
   // (The duck itself is a DOM overlay so it can use sprite-sheet animations.)
 }
 
+// Pixel-art cactus map (11×14), identical to the website's <PixelCactus />.
+// 1 = body, 0 = empty.
+const CACTUS_MAP = [
+  '00000100000',
+  '00000110000',
+  '00100110000',
+  '01100111001',
+  '01101111011',
+  '01111111011',
+  '00111111110',
+  '00011111100',
+  '00001111000',
+  '00001111000',
+  '00001111000',
+  '00001111000',
+  '00011111100',
+  '00011111100'
+]
+const CACTUS_COLS = 11
+const CACTUS_ROWS = 14
+
+/**
+ * Draws the same chunky pixel cactus used on the marketing site: a checker-shaded
+ * green body with a darker pixel-shadow along its left and bottom edges. The 11×14
+ * grid is scaled to fit the obstacle's bounding box (x, y = top-left; w, h = size).
+ */
 function drawCactus(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
-  ctx.fillStyle = '#3fa45b'
-  ctx.strokeStyle = '#1d5230'
-  ctx.lineWidth = 2
-  ctx.fillRect(x, y, w, h)
-  ctx.strokeRect(x, y, w, h)
-  // A little arm.
-  const armW = Math.max(6, w * 0.4)
-  const armY = y + h * 0.35
-  ctx.fillRect(x - armW, armY, armW, 6)
-  ctx.fillRect(x - armW, armY - h * 0.2, 6, h * 0.2)
-  ctx.fillRect(x + w, armY + 8, armW, 6)
-  ctx.fillRect(x + w + armW - 6, armY - h * 0.12 + 8, 6, h * 0.12)
+  const cw = w / CACTUS_COLS
+  const ch = h / CACTUS_ROWS
+  for (let row = 0; row < CACTUS_ROWS; row++) {
+    const line = CACTUS_MAP[row]
+    for (let col = 0; col < CACTUS_COLS; col++) {
+      if (line[col] === '0') continue
+      const px = x + col * cw
+      const py = y + row * ch
+      // Body with subtle checker shading.
+      ctx.fillStyle = (col + row) % 4 === 0 ? '#2f7d45' : '#3fa45b'
+      ctx.fillRect(px, py, cw + 0.6, ch + 0.6)
+      // Dark pixel-shadow on exposed left / bottom edges.
+      const leftEmpty = col === 0 || line[col - 1] === '0'
+      const below = CACTUS_MAP[row + 1]
+      const belowEmpty = row === CACTUS_ROWS - 1 || !below || below[col] === '0'
+      if (leftEmpty || belowEmpty) {
+        ctx.fillStyle = 'rgba(29,82,48,0.55)'
+        ctx.fillRect(px, py, cw + 0.6, ch + 0.6)
+      }
+    }
+  }
 }
