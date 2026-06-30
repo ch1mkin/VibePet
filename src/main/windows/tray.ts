@@ -36,7 +36,7 @@ export function createTray(deps: TrayDeps): Tray {
         { label: '🦆 Open Assistant', click: () => deps.windows.togglePanel() },
         { label: 'Show Duck', click: () => deps.windows.setDuckVisible(true) },
         {
-          label: 'Call Duck Back (Ctrl/⌘+Shift+9)',
+          label: 'Call Duck Back (Ctrl/⌘+Shift+Space)',
           click: () => {
             deps.windows.setDuckVisible(true)
             deps.onRecall()

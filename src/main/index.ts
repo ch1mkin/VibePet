@@ -22,7 +22,7 @@ import type { Tray } from 'electron'
 
 const PANEL_SHORTCUT = 'CommandOrControl+Shift+D'
 const SIT_SHORTCUT = 'CommandOrControl+Shift+0'
-const RECALL_SHORTCUT = 'CommandOrControl+Shift+9'
+const RECALL_SHORTCUT = 'CommandOrControl+Shift+Space'
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
 // A custom scheme to serve user sprite sheets. Needed because the renderer runs
