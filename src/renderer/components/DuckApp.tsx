@@ -30,6 +30,7 @@ export function DuckApp(): JSX.Element {
   useDuckSpeech()
 
   const say = useSpeechStore((s) => s.say)
+  const message = useSpeechStore((s) => s.message)
   const react = useDuckStore((s) => s.react)
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const menuTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -59,6 +60,13 @@ export function DuckApp(): JSX.Element {
       offVis()
     }
   }, [])
+
+  // Hold the duck still while a speech or draft bubble is on screen so the
+  // message is easy to read (it's hard to read while the pet walks around).
+  const speaking = Boolean(message) || draft.trim().length > 0
+  useEffect(() => {
+    void ipc.invoke(ipc.channels.DuckSpeaking, speaking)
+  }, [speaking])
 
   const setInteractive = (interactive: boolean): void => {
     // WindowSetClickThrough(true) = ignore mouse; pass `false` to interact.

@@ -69,6 +69,7 @@ export function registerIpc({
 
   handle(IPC.DuckGetProfile, () => repos.duck.getProfile())
   handle(IPC.DuckSaveProfile, (profile) => repos.duck.saveProfile(profile))
+  handle(IPC.DuckSpeaking, (speaking) => motion.setSpeaking(speaking))
 
   handle(IPC.PromptBoostGet, () => promptBoost.getState())
   handle(IPC.PromptBoostSet, (enabled) => promptBoost.setEnabled(enabled))

@@ -52,6 +52,8 @@ export const IPC = {
   DuckGetProfile: 'duck:getProfile',
   DuckSaveProfile: 'duck:saveProfile',
   DuckContextMenu: 'duck:contextMenu',
+  /** Renderer tells main a speech/draft bubble is (not) showing, to hold movement. */
+  DuckSpeaking: 'duck:speaking',
 
   // Prompt Boost (rewrite the prompt before it's sent)
   PromptBoostGet: 'promptBoost:get',
@@ -137,6 +139,7 @@ export interface IpcInvokeMap {
   [IPC.DuckGetProfile]: { args: []; result: DuckProfile }
   [IPC.DuckSaveProfile]: { args: [profile: Partial<DuckProfile>]; result: DuckProfile }
   [IPC.DuckContextMenu]: { args: []; result: void }
+  [IPC.DuckSpeaking]: { args: [speaking: boolean]; result: void }
 
   [IPC.PromptBoostGet]: { args: []; result: { enabled: boolean } }
   [IPC.PromptBoostSet]: { args: [enabled: boolean]; result: { enabled: boolean } }

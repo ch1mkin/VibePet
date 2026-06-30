@@ -64,6 +64,8 @@ export class DuckMotionService {
   private last: MotionState = { moving: false, fast: false, facing: 'left' }
   private sitting = false
   private paused = false
+  /** While a speech/draft bubble is on screen, hold still so it's readable. */
+  private speaking = false
 
   private roamTarget: Point | null = null
   private roamDwellUntil = 0
@@ -150,6 +152,11 @@ export class DuckMotionService {
   /** Freeze all movement (e.g. while a mini-game owns the screen). */
   setPaused(paused: boolean): void {
     this.paused = paused
+  }
+
+  /** Hold the duck still while a speech/draft bubble is showing (so it's readable). */
+  setSpeaking(speaking: boolean): void {
+    this.speaking = speaking
   }
 
   /**
@@ -254,6 +261,14 @@ export class DuckMotionService {
     const cursorFacing: 'left' | 'right' = cursor.x >= bodyX ? 'right' : 'left'
 
     if (this.sitting) {
+      this.emit({ moving: false, fast: false, facing: cursorFacing })
+      return
+    }
+
+    // Hold still while a message/draft bubble is up so the user can read it
+    // (the duck stays put, just turns to face the cursor). It's already been
+    // clamped on-screen above, so it can't drift off while frozen.
+    if (this.speaking) {
       this.emit({ moving: false, fast: false, facing: cursorFacing })
       return
     }
