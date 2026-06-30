@@ -44,6 +44,12 @@ mac:
   icon: build/icon.png
   # Skip code-signing for local/personal builds (no Apple Developer cert needed).
   identity: null
+  # Required so macOS will show the Automation ("control System Events") consent
+  # prompt — Prompt Boost drives select-all/copy/paste via AppleScript, which
+  # needs Automation in addition to Accessibility.
+  extendInfo:
+    NSAppleEventsUsageDescription: VibeDuck uses automation to read and improve the prompt in your active AI chat box.
+    NSAccessibilityUsageDescription: VibeDuck uses accessibility to read and improve the prompt in your active AI chat box.
   target:
     - dmg
   artifactName: ${productName}-${version}-${arch}.${ext}

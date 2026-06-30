@@ -162,11 +162,11 @@ end tell`
     try {
       await run(
         `osascript -e 'tell application "System Events"' ` +
-          `-e 'keystroke "a" using command down' -e 'delay 0.06' ` +
+          `-e 'keystroke "a" using command down' -e 'delay 0.1' ` +
           `-e 'keystroke "c" using command down' -e 'end tell'`,
         { timeout: EXEC_TIMEOUT }
       )
-      await wait(140)
+      await wait(220)
       const text = clipboard.readText()
       if (text === sentinel || text === '') {
         clipboard.writeText(previous)

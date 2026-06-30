@@ -70,7 +70,10 @@ export class PromptBoostService {
     try {
       const trusted = systemPreferences.isTrustedAccessibilityClient(true)
       if (!trusted) {
-        this.say('enable VibeDuck in System Settings → Accessibility, then retry', 'tip')
+        this.say(
+          'enable VibeDuck under Accessibility AND Automation in System Settings → Privacy, then relaunch',
+          'tip'
+        )
       }
     } catch {
       /* not available on this platform */
@@ -134,13 +137,28 @@ export class PromptBoostService {
     try {
       // Select-all + copy works even in apps that hide AXValue (ChatGPT web,
       // Cursor); fall back to the AXValue read only if that's unavailable.
-      let text = (await this.activeApp.captureFocusedText())?.trim() ?? ''
+      // `null` from either call means the OS automation was blocked/denied
+      // (vs. `''` which means the field really was empty).
+      const captured = await this.activeApp.captureFocusedText()
+      let permissionDenied = captured === null
+      let text = (captured ?? '').trim()
       if (!text) {
         const field = await this.activeApp.getFocusedField()
+        if (field) permissionDenied = false
         text = (field?.text ?? '').trim()
       }
       if (!text) {
-        this.say('type a prompt first, then press ⌘↵', 'tip')
+        if (permissionDenied && process.platform === 'darwin') {
+          // The most common cause: Accessibility was granted but Automation
+          // ("control System Events") wasn't, so keystrokes/copy silently fail.
+          this.react('confused')
+          this.say(
+            'allow VibeDuck under BOTH Accessibility and Automation in System Settings → Privacy, then relaunch',
+            'tip'
+          )
+        } else {
+          this.say('type a prompt first, then press ⌘↵', 'tip')
+        }
         return
       }
 
