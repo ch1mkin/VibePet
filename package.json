@@ -22,9 +22,10 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "rebuild": "electron-builder install-app-deps",
     "postinstall": "electron-builder install-app-deps",
-    "package": "npm run build && electron-builder",
-    "package:win": "npm run build && electron-builder --win",
-    "package:mac": "npm run build && electron-builder --mac"
+    "clean:native": "rm -rf node_modules/better-sqlite3/build node_modules/better-sqlite3/prebuilds",
+    "package": "npm run clean:native && npm run build && electron-builder",
+    "package:win": "npm run clean:native && npm run build && electron-builder --win",
+    "package:mac": "npm run clean:native && npm run build && electron-builder --mac"
   },
   "dependencies": {
     "@fontsource/press-start-2p": "^5.2.7",
