@@ -1,4 +1,4 @@
-import { exec } from 'node:child_process'
+import { exec, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { promisify } from 'node:util'
 import { clipboard } from 'electron'
 
@@ -55,6 +55,8 @@ export interface ActiveAppAdapter {
   pasteText(text: string): Promise<boolean>
   /** Simulate pressing Enter/Return in the focused app to submit. */
   submitFocused(): Promise<boolean>
+  /** Release any OS resources (e.g. a persistent helper process). */
+  dispose?(): void
 }
 
 const MAC_BROWSERS = new Set([
@@ -210,41 +212,144 @@ end tell`
   }
 }
 
-/** Windows: foreground process name + window title via PowerShell + Win32 API. */
-class Win32ActiveApp implements ActiveAppAdapter {
-  private static readonly PS = `
-$sig = @'
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-public class Win {
-  public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+/**
+ * A single long-lived PowerShell process for fast foreground-window queries.
+ *
+ * The previous design spawned a new `powershell` AND recompiled a C# type on
+ * EVERY poll (~1/sec). On Windows that was both slow (visible lag) and flaky
+ * (timeouts made the duck "fail open" and show on every app). Here we spawn one
+ * interactive PowerShell, compile the Win32 type ONCE, and answer each query in
+ * milliseconds by writing a one-line command and reading back a marker-delimited
+ * result.
+ */
+class PowerShellHost {
+  private proc: ChildProcessWithoutNullStreams | null = null
+  private buffer = ''
+  private seq = 0
+  private queue: Array<{
+    start: string
+    end: string
+    resolve: (value: string) => void
+    reject: (err: Error) => void
+    timer: ReturnType<typeof setTimeout>
+    done: boolean
+  }> = []
+
+  private static readonly INIT = [
+    "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; using System.Text; public class Win { public struct RECT { public int Left, Top, Right, Bottom; } [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow(); [DllImport(\"user32.dll\")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n); [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid); [DllImport(\"user32.dll\")] public static extern bool GetWindowRect(IntPtr h, out RECT r); }'",
+    "function Get-Fg { $h = [Win]::GetForegroundWindow(); $sb = New-Object System.Text.StringBuilder 512; [void][Win]::GetWindowText($h, $sb, 512); $procId = 0; [void][Win]::GetWindowThreadProcessId($h, [ref]$procId); $proc = ''; try { $proc = (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch {}; $r = New-Object Win+RECT; [void][Win]::GetWindowRect($h, [ref]$r); Write-Output ($proc + '|' + $r.Left + '|' + $r.Top + '|' + $r.Right + '|' + $r.Bottom + '|' + $sb.ToString()) }"
+  ]
+
+  private ensure(): ChildProcessWithoutNullStreams | null {
+    if (this.proc && this.proc.exitCode === null && !this.proc.killed) return this.proc
+    try {
+      const proc = spawn(
+        'powershell',
+        ['-NoProfile', '-NoLogo', '-ExecutionPolicy', 'Bypass'],
+        { windowsHide: true }
+      )
+      this.proc = proc
+      proc.stdout.setEncoding('utf8')
+      proc.stdout.on('data', (d: string) => this.onData(d))
+      proc.on('exit', () => this.teardown())
+      proc.on('error', () => this.teardown())
+      proc.stdin.on('error', () => this.teardown())
+      for (const line of PowerShellHost.INIT) proc.stdin.write(line + '\n')
+      return proc
+    } catch {
+      this.proc = null
+      return null
+    }
+  }
+
+  private teardown(): void {
+    this.proc = null
+    this.buffer = ''
+    const pending = this.queue.splice(0)
+    for (const job of pending) {
+      clearTimeout(job.timer)
+      if (!job.done) {
+        job.done = true
+        job.reject(new Error('powershell host stopped'))
+      }
+    }
+  }
+
+  private onData(chunk: string): void {
+    this.buffer += chunk
+    // Resolve completed jobs in FIFO order (PowerShell executes our writes
+    // sequentially, so results arrive in the same order).
+    while (this.queue.length > 0) {
+      const job = this.queue[0]
+      const si = this.buffer.indexOf(job.start)
+      if (si < 0) break
+      const ei = this.buffer.indexOf(job.end, si + job.start.length)
+      if (ei < 0) break
+      const payload = this.buffer.slice(si + job.start.length, ei)
+      this.buffer = this.buffer.slice(ei + job.end.length)
+      this.queue.shift()
+      clearTimeout(job.timer)
+      if (!job.done) {
+        job.done = true
+        job.resolve(payload)
+      }
+    }
+    // Guard against unbounded growth if something desyncs.
+    if (this.buffer.length > 65536) this.buffer = this.buffer.slice(-4096)
+  }
+
+  exec(command: string, timeoutMs: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const proc = this.ensure()
+      if (!proc) {
+        reject(new Error('powershell unavailable'))
+        return
+      }
+      const id = ++this.seq
+      const start = `<<VBS${id}>>`
+      const end = `<<VBE${id}>>`
+      const job = { start, end, resolve, reject, done: false, timer: setTimeout(() => {}, 0) }
+      job.timer = setTimeout(() => {
+        if (!job.done) {
+          job.done = true
+          reject(new Error('powershell query timed out'))
+        }
+      }, timeoutMs)
+      this.queue.push(job)
+      try {
+        proc.stdin.write(`Write-Output '${start}'; ${command}; Write-Output '${end}'\n`)
+      } catch {
+        clearTimeout(job.timer)
+        if (!job.done) {
+          job.done = true
+          reject(new Error('powershell write failed'))
+        }
+      }
+    })
+  }
+
+  dispose(): void {
+    const proc = this.proc
+    this.teardown()
+    if (proc) {
+      try {
+        proc.kill()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
-'@
-Add-Type $sig
-$h = [Win]::GetForegroundWindow()
-$sb = New-Object System.Text.StringBuilder 512
-[void][Win]::GetWindowText($h, $sb, 512)
-$procId = 0
-[void][Win]::GetWindowThreadProcessId($h, [ref]$procId)
-$proc = ''
-try { $proc = (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch {}
-$r = New-Object Win+RECT
-[void][Win]::GetWindowRect($h, [ref]$r)
-# proc | left | top | right | bottom | title  (title last; it may contain '|')
-Write-Output ($proc + "|" + $r.Left + "|" + $r.Top + "|" + $r.Right + "|" + $r.Bottom + "|" + $sb.ToString())`
+
+/** Windows: foreground process name + window title via a persistent PowerShell host. */
+class Win32ActiveApp implements ActiveAppAdapter {
+  private readonly host = new PowerShellHost()
 
   async getActive(): Promise<ActiveAppInfo | null> {
     try {
-      const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "${Win32ActiveApp.PS.replace(/"/g, '\\"')}"`
-      // Compiling the Win32 type can be slow on the first call, so allow extra time.
-      const { stdout } = await run(cmd, { timeout: 6000 })
-      const parts = stdout.trim().split('|')
-      const proc = parts[0]
+      const out = await this.host.exec('Get-Fg', 4000)
+      const parts = out.trim().split('|')
+      const proc = parts[0]?.trim()
       if (!proc) return null
       const info: ActiveAppInfo = { appName: proc, title: parts.slice(5).join('|').trim() }
       const [left, top, right, bottom] = parts.slice(1, 5).map(Number)
@@ -255,6 +360,10 @@ Write-Output ($proc + "|" + $r.Left + "|" + $r.Top + "|" + $r.Right + "|" + $r.B
     } catch {
       return null
     }
+  }
+
+  dispose(): void {
+    this.host.dispose()
   }
 
   /** Reads the focused control's bounds + text via Windows UI Automation. */
@@ -381,8 +490,62 @@ class NoopActiveApp implements ActiveAppAdapter {
   }
 }
 
+/**
+ * Wraps another adapter to (a) cache `getActive()` for a short TTL and (b)
+ * coalesce concurrent calls into one. Two services poll the foreground app
+ * (visibility + prompt-watch); without this they'd each pay the OS cost.
+ */
+class CachedActiveApp implements ActiveAppAdapter {
+  private cache: { at: number; value: ActiveAppInfo | null } | null = null
+  private inflight: Promise<ActiveAppInfo | null> | null = null
+
+  constructor(
+    private readonly inner: ActiveAppAdapter,
+    private readonly ttlMs = 600
+  ) {}
+
+  async getActive(): Promise<ActiveAppInfo | null> {
+    const now = Date.now()
+    if (this.cache && now - this.cache.at < this.ttlMs) return this.cache.value
+    if (this.inflight) return this.inflight
+    this.inflight = this.inner
+      .getActive()
+      .then((value) => {
+        this.cache = { at: Date.now(), value }
+        return value
+      })
+      .finally(() => {
+        this.inflight = null
+      })
+    return this.inflight
+  }
+
+  getFocusedField(): Promise<FocusedField | null> {
+    return this.inner.getFocusedField()
+  }
+  replaceFocusedText(text: string): Promise<boolean> {
+    return this.inner.replaceFocusedText(text)
+  }
+  captureFocusedText(): Promise<string | null> {
+    return this.inner.captureFocusedText()
+  }
+  pasteText(text: string): Promise<boolean> {
+    return this.inner.pasteText(text)
+  }
+  submitFocused(): Promise<boolean> {
+    return this.inner.submitFocused()
+  }
+  dispose(): void {
+    this.inner.dispose?.()
+  }
+}
+
 export function createActiveAppAdapter(): ActiveAppAdapter {
-  if (process.platform === 'darwin') return new DarwinActiveApp()
-  if (process.platform === 'win32') return new Win32ActiveApp()
-  return new NoopActiveApp()
+  const base =
+    process.platform === 'darwin'
+      ? new DarwinActiveApp()
+      : process.platform === 'win32'
+        ? new Win32ActiveApp()
+        : new NoopActiveApp()
+  return new CachedActiveApp(base)
 }

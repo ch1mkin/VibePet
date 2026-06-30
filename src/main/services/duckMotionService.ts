@@ -2,9 +2,11 @@ import { screen, type Display } from 'electron'
 import { IPC } from '@shared/ipc-contract'
 import type { WindowManager } from '../windows/windowManager'
 
-const TICK_MS = 16
-const WALK_SPEED = 4 // px per tick — gentle stroll
-const RUN_SPEED = 9 // px per tick — hurrying over to you
+// 30fps is plenty smooth for a strolling pet and roughly halves the main-process
+// work vs 60fps (less CPU/lag, especially on Windows).
+const TICK_MS = 33
+const WALK_SPEED = 5 // px per tick — gentle stroll (~150px/s)
+const RUN_SPEED = 12 // px per tick — hurrying over to you
 const RUN_DISTANCE = 340 // run when the target is far
 const STOP_DISTANCE = 6 // close enough to the target — settle
 const WIN_W = 300
@@ -72,16 +74,47 @@ export class DuckMotionService {
   /** Foreground (coding/AI) window rect in PHYSICAL pixels, or null. */
   private activeWinBounds: { x: number; y: number; w: number; h: number } | null = null
 
+  /** Cached monitor list, refreshed only when displays actually change (cheap ticks). */
+  private displays: Display[] = []
+  private readonly refreshDisplays = (): void => {
+    this.displays = screen.getAllDisplays()
+  }
+
   constructor(private readonly windows: WindowManager) {}
 
   start(): void {
     if (this.timer) return
+    this.refreshDisplays()
+    screen.on('display-added', this.refreshDisplays)
+    screen.on('display-removed', this.refreshDisplays)
+    screen.on('display-metrics-changed', this.refreshDisplays)
     this.timer = setInterval(() => this.tick(), TICK_MS)
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+    screen.removeListener('display-added', this.refreshDisplays)
+    screen.removeListener('display-removed', this.refreshDisplays)
+    screen.removeListener('display-metrics-changed', this.refreshDisplays)
+  }
+
+  /** Cheap nearest-display lookup using the cached monitor list. */
+  private nearestDisplay(p: Point): Display {
+    const list = this.displays.length > 0 ? this.displays : screen.getAllDisplays()
+    let best = list[0]
+    let bestDist = Infinity
+    for (const d of list) {
+      const b = d.bounds
+      const cx = clamp(p.x, b.x, b.x + b.width)
+      const cy = clamp(p.y, b.y, b.y + b.height)
+      const dist = (p.x - cx) ** 2 + (p.y - cy) ** 2
+      if (dist < bestDist) {
+        bestDist = dist
+        best = d
+      }
+    }
+    return best
   }
 
   isSitting(): boolean {
@@ -150,13 +183,13 @@ export class DuckMotionService {
         // GetWindowRect is in physical pixels; Electron's screen API is in DIPs.
         const dip = screen.screenToDipPoint(center)
         if (Number.isFinite(dip.x) && Number.isFinite(dip.y)) {
-          return screen.getDisplayNearestPoint(dip)
+          return this.nearestDisplay(dip)
         }
       } catch {
         // Fall through to the cursor display.
       }
     }
-    return screen.getDisplayNearestPoint(cursor)
+    return this.nearestDisplay(cursor)
   }
 
   /** Point (duck body) to walk to while watching a prompt; null resumes roaming. */
@@ -232,7 +265,7 @@ export class DuckMotionService {
     // another display, head over there — but never follow the cursor onto the
     // desktop or another monitor on its own.
     if (!this.promptWatch) {
-      const duckDisplayId = screen.getDisplayNearestPoint({ x: bodyX, y: bodyY }).id
+      const duckDisplayId = this.nearestDisplay({ x: bodyX, y: bodyY }).id
       if (duckDisplayId !== workDisplay.id) {
         this.roamTarget = this.randomBodyPoint(workDisplay)
         this.roamDwellUntil = 0
@@ -302,7 +335,7 @@ export class DuckMotionService {
    * area — so it holds even if the OS misreports the taskbar-free work area).
    */
   private clampWindow(x: number, y: number): Point {
-    const displays = screen.getAllDisplays()
+    const displays = this.displays.length > 0 ? this.displays : screen.getAllDisplays()
     if (displays.length === 0) return { x: safeInt(x, 0), y: safeInt(y, 0) }
 
     // Horizontal extent across every monitor (allows crossing between displays).
@@ -317,7 +350,7 @@ export class DuckMotionService {
     // Vertical bounds come from the single monitor the duck's body is over, so
     // we always respect THAT screen's taskbar/work area.
     const bodyPoint = { x: safeInt(x + ANCHOR_X, 0), y: safeInt(y + ANCHOR_Y, 0) }
-    const display = screen.getDisplayNearestPoint(bodyPoint)
+    const display = this.nearestDisplay(bodyPoint)
     const here = display.workArea
     const top = here.y + EDGE_MARGIN
     // The lowest the WINDOW top may go: whichever is higher (smaller Y) of the

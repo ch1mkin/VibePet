@@ -219,6 +219,7 @@ app.on('will-quit', () => {
   visibilityService?.stop()
   motionService?.stop()
   promptWatchService?.stop()
+  platform?.activeApp.dispose?.()
   platform?.shortcuts.unregisterAll()
   tray?.destroy()
   closeDatabase()

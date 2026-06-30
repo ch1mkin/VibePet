@@ -80,8 +80,12 @@ export class VisibilityService {
     }
     const info = await this.activeApp.getActive()
     if (!info) {
+      // Detection unavailable for this poll. Don't pop the duck onto whatever
+      // app happens to be focused — keep the previous decision (hidden until we
+      // positively detect a coding/AI app). The user can disable the filter in
+      // the tray if they want the duck everywhere.
       this.onActiveWindow?.(null)
-      return true // fail open: detection unavailable
+      return this.lastVisible ?? false
     }
     const visible = matches(info, this.config)
     // Tell the duck which monitor the focused coding/AI window lives on so it
