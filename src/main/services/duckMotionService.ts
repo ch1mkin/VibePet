@@ -237,31 +237,40 @@ export class DuckMotionService {
   }
 
   /**
-   * Keeps the duck window fully inside the combined desktop (all monitors). It
-   * may roam freely across adjacent displays, but can never end up off-screen —
-   * which previously happened on Windows multi-monitor setups.
+   * Keeps the duck window on-screen. Horizontally it may roam across the whole
+   * desktop (so side-by-side monitors work), but VERTICALLY it's clamped to the
+   * workArea of the monitor the duck is currently on. workArea excludes the
+   * taskbar, and because the duck's feet sit ~65px above the window's bottom
+   * edge plus the EDGE_MARGIN, it can never reach — or even get close to — the
+   * taskbar, and never leaves the screen (the previous union clamp let it drift
+   * toward another monitor's taskbar on Windows).
    */
   private clampWindow(x: number, y: number): Point {
     const displays = screen.getAllDisplays()
     if (displays.length === 0) return { x: safeInt(x, 0), y: safeInt(y, 0) }
 
+    // Horizontal extent across every monitor (allows crossing between displays).
     let minX = Infinity
-    let minY = Infinity
     let maxRight = -Infinity
-    let maxBottom = -Infinity
     for (const display of displays) {
       const a = display.workArea
       minX = Math.min(minX, a.x)
-      minY = Math.min(minY, a.y)
       maxRight = Math.max(maxRight, a.x + a.width)
-      maxBottom = Math.max(maxBottom, a.y + a.height)
     }
+
+    // Vertical bounds come from the single monitor the duck's body is over, so
+    // we always respect THAT screen's taskbar/work area.
+    const bodyPoint = { x: safeInt(x + ANCHOR_X, 0), y: safeInt(y + ANCHOR_Y, 0) }
+    const here = screen.getDisplayNearestPoint(bodyPoint).workArea
+    const top = here.y + EDGE_MARGIN
+    const bottom = here.y + here.height - WIN_H - EDGE_MARGIN
+
     // Fractional display scaling (e.g. 150% on Windows) makes workArea values
     // non-integer; setPosition requires integers, so round the final result and
     // fall back to the input if anything came out non-finite.
     return {
       x: safeInt(clamp(x, minX + EDGE_MARGIN, maxRight - WIN_W - EDGE_MARGIN), x),
-      y: safeInt(clamp(y, minY + EDGE_MARGIN, maxBottom - WIN_H - EDGE_MARGIN), y)
+      y: safeInt(clamp(y, top, Math.max(top, bottom)), y)
     }
   }
 
